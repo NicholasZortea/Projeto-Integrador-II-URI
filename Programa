@@ -155,7 +155,7 @@ AuthUser=$EMAIL
 EOF
 
 echo "Digite a senha do e-mail: "
-read "SENHAEMAIL"
+read -s "SENHAEMAIL"
 echo ""
 variavelhostname=$(hostname)
 				
@@ -175,20 +175,16 @@ funcaoEnviarEmail "$ASSUNTOEMAIL" "$CONTEUDOEMAIL"
 
 
 funcaoApagaArquivoVelho(){
-rm -f /root/BancosVelhos
-rm -f /root/datatemp.txt
-rm -f /root/datatemp2.txt
-sed -i '/#BancosVelhos/d' /etc/crontab
-
-touch /root/BancosVelhos.sh
+rm -f /root/.BancosVelhos.sh
+touch /root/.BancosVelhos.sh
 
 sed -i '/#BancosVelhos/d' /etc/crontab
 cat << EOF >> /etc/crontab
-  00  00  *  *  * root /root/BancosVelhos #BancosVelhos
+  00  00  *  *  * root /root/.BancosVelhos.sh #BancosVelhos
 EOF
 
-chmod 777 /root/BancosVelhos.sh
-cat << EOF > /root/BancosVelhos.sh
+chmod 777 /root/.BancosVelhos.sh
+cat << EOF > /root/.BancosVelhos.sh
 #!/bin/bash
 
 find $ENDERECOBANCO/bd_old/ -mtime +10 -type f -delete
@@ -483,6 +479,7 @@ Iniciar)
 		then
 			cd $ENDERECOBANCO
 			echo "o processo sera iniciado"
+			echo " "
 			sleep 3
 			funcaoBackup $SENHABANCO sysdb.fbd sysdb.fbk BackupPrincipal.txt &
 			funcaoBackup $SENHABANCO sysdb_img.fbd sysdb_img.fbk BackupImagem.txt &
@@ -508,11 +505,11 @@ Iniciar)
 			mv $ENDERECOBANCO/bd_old/*.txt $ENDERECOBANCO/logs/
 			mv $ENDERECOBANCO/*.txt $ENDERECOBANCO/logs/
 
-			echo -n "o processo de verificacao de integridade do banco foi finalizado"
+			echo "o processo de verificacao de integridade do banco foi finalizado"
 			sleep 4
 
 			cd $ENDERECOBANCO/logs
-			echo -n "agora os logs serao analisados"
+			echo "agora os logs serao analisados"
 			echo " "
 			funcaolerarquivo ComEmail BackupPrincipal.txt
 			funcaolerarquivo ComEmail BackupImagem.txt
