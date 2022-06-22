@@ -1,0 +1,605 @@
+#!/bin/bash
+
+###################################################################
+##################            FUNCOES            ##################
+###################################################################
+repeteEcho(){
+clear
+echo "************************************************************************************************"
+echo "*********************************BACKUP E RESTORE AUTOMATIZADOS*********************************"
+echo "************************************************************************************************"
+echo "1) Manual"
+echo "2) Configurar"
+echo "3) Email"
+echo "4) Iniciar"
+echo "5) Sair"
+}
+
+
+funcaoBackup(){
+/opt/firebird/bin/gbak -b -l -g -v -user SYSDBA -pass $1 $2 $3 >> $4
+}
+
+
+funcaoRestore(){
+/opt/firebird/bin/gbak -c -v -p 8192 -user SYSDBA -pass $1 $2 $3 >> $4
+}
+
+
+funcaolerarquivo(){
+
+
+############
+#Com e-mail#
+############
+if [[ "$1" == "ComEmail" ]]
+then
+	erro=0
+	while IFS= read -r LINHA || [[ -n "$LINHA" ]]; do
+		
+		SUBSTRING=${LINHA:6:6}
+		
+		
+		if [[ "$SUBSTRING" == "ERROR:" ]]
+		then
+			echo " o banco esta com problemas"
+			echo -n "o erro e o seguinte: "
+			echo "$LINHA"
+			funcaoEnviarEmail "$2" "$LINHA"
+			sleep 4
+		else
+			erro=0
+		fi
+
+		if [[ "$LINHA" == "gbak:Exiting before completion due to errors" ]]
+		then
+			echo "o banco esta com problemas"
+			echo "um email sera enviado"
+			sleep 10
+			funcaoEnviarEmail "$2" "$LINHA"
+			unset erro
+			erro=1
+		fi
+	done < $2
+
+	if [[ $erro == 0 ]]
+	then
+		SEM_ERROS="nao foram encontrados erros no arquivo"
+		funcaoEnviarEmail "$2" "$SEM_ERROS"
+	fi
+	
+############
+#Sem e-mail#
+############
+elif [[ "$1" == "SemEmail" ]]
+then
+	erro=0
+	while IFS= read -r LINHA || [[ -n "$LINHA" ]]; do
+		
+		SUBSTRING=${LINHA:6:6}
+		
+
+		if [[ "$SUBSTRING" == "ERROR:" ]]
+		then
+			echo " o banco esta com problemas"
+			echo -n "o erro e o seguinte: "
+			echo "$LINHA"
+			sleep 4
+		else
+			erro=0
+		fi
+
+		if [[ "$LINHA" == "gbak:Exiting before completion due to errors" ]]
+		then
+			echo "o banco esta com problemas"
+			echo "um email sera enviado"
+			sleep 10
+			unset erro
+			erro=1
+		fi
+	done < $2
+
+	if [[ $erro == 0 ]]
+	then
+		echo -n "nao foram encontrados erros no arquivo"
+		echo " "
+		echo "$2"
+		sleep 4
+	fi
+fi
+}
+
+
+funcaoBaixaPacotes(){
+PACOTE=$(yum list installed | grep "ssmtp.x86_64")
+
+if [ -z "$PACOTE" ]
+then
+	yum install ssmtp.x86_64 -y
+else
+	echo "voce já possui o pacote ssmtp instalado"
+fi
+sleep 3
+
+unset PACOTE
+PACOTE=$(yum list installed | grep "mlocate.x86_64")
+
+if [ -z "$PACOTE" ]
+then
+	yum install mlocate.x86_64 -y
+else
+	echo "voce já possui o pacote locate instalado"
+fi
+sleep 3
+}
+
+
+funcaoConfiguraEmail(){
+ #configuracao do arquivo ssmtp.conf
+echo "voce selecionou a opcao de Configurar o email"
+echo "o servico de smtp sera configurado agora"
+echo -n > /etc/ssmtp/ssmtp.conf
+echo ""
+echo "Digite o e-mail que deseja utilizar: "
+read -s "EMAIL"
+echo ""
+				
+cat << EOF >> /etc/ssmtp/ssmtp.conf
+root=$EMAIL
+FromLineOverride=YES
+UseTLS=YES
+UseSTARTTLS=YES
+TLS_CA_File=/etc/pki/tls/certs/ca-bundle.crt
+mailhub=smtp.gmail.com:587
+AuthUser=$EMAIL
+EOF
+
+echo "Digite a senha do e-mail: "
+read "SENHAEMAIL"
+echo ""
+variavelhostname=$(hostname)
+				
+cat << EOF >> /etc/ssmtp/ssmtp.conf
+AuthPass=$SENHAEMAIL
+AuthMethod=LOGIN
+hostname=$variavelhostname
+EOF
+
+echo "o email de teste sera enviado"
+				
+ASSUNTOEMAIL="Teste de Email"
+CONTEUDOEMAIL="Email enviado como teste"
+funcaoEnviarEmail "$ASSUNTOEMAIL" "$CONTEUDOEMAIL"
+                
+}
+
+
+funcaoApagaArquivoVelho(){
+rm -f /root/BancosVelhos
+rm -f /root/datatemp.txt
+rm -f /root/datatemp2.txt
+sed -i '/#BancosVelhos/d' /etc/crontab
+
+touch /root/BancosVelhos.sh
+
+sed -i '/#BancosVelhos/d' /etc/crontab
+cat << EOF >> /etc/crontab
+  00  00  *  *  * root /root/BancosVelhos #BancosVelhos
+EOF
+
+chmod 777 /root/BancosVelhos.sh
+cat << EOF > /root/BancosVelhos.sh
+#!/bin/bash
+
+find $ENDERECOBANCO/bd_old/ -mtime +10 -type f -delete
+find $ENDERECOBANCO/logs/ -mtime +10 -type f -delete
+
+EOF
+}
+
+
+funcaoEnviarEmail(){
+rm -f enviarEmail.txt
+touch enviarEmail.txt
+
+cat << EOF >> enviarEmail.txt
+To: $EMAIL
+From: $EMAIL
+Cc: $EMAIL
+Subject: $1
+$2
+EOF
+
+cat enviarEmail.txt | ssmtp $EMAIL
+echo -n
+sleep 3
+rm -f enviarEmail.txt
+				
+}
+
+
+
+
+###################################################################
+################cria a estrutura de menu###########################
+###################################################################
+
+clear
+echo "************************************************************************************************"
+echo "*********************************BACKUP E RESTORE AUTOMATIZADOS*********************************"
+echo "************************************************************************************************"
+select opcao in Manual Configurar Email Iniciar Sair
+do
+case $opcao in
+
+Manual)
+	echo "Este programa possui a finalidade de facilitar o processo de otimizacao e verificacao de integridade de um banco de dados firebird no Sistema Operacional linux (CentOS 7)"
+	echo "A seguir sera explicado cada uma das opcoes do menu:"
+	echo " "
+	echo "Opcao: Manual"
+	echo "Esta opcao tem o proposito de explicar o funcionamento do programa e como o mesmo deve ser configurado"
+	echo " "
+	echo "Opcao: Configurar"
+	echo "Esta Opcao possui carater obrigatorio visto que nela e informado o endereco do banco juntamente da senha"
+	echo " "
+	echo "Opcao: Email"
+	echo "Esta Opcao tem a finalidade de configurar o E-mail, para que após a verificacao do banco ou a otimizacao seja analisado os logs de saida e enviado a situacao dos mesmos por e-mail"
+	echo "Nao Possui carater Obrigatorio"
+	echo " "
+	echo "Opcao: Iniciar"
+	echo "Esta opcao da inicio ao processo de Otimizacao ou verificacao (varia conforme a selecao do usuario apos iniciar o processo)"
+	echo "Para utilizar esta opcao e necessario a configuracao previa (por meio da opcao "configurar")"
+	echo " "
+	echo "Opcao: Sair"
+	echo "Como o nome diz, ao selecionar esta opcao o usuario saira do programa"
+	echo " "
+	echo " "
+	echo "Pressione enter para continuar..."
+	read x
+	repeteEcho;;			
+
+Configurar)
+	clear
+	echo "voce selecionou a opcao de configuracao"
+	echo "alguns pacotes serao baixados"
+
+	funcaoBaixaPacotes
+	clear
+
+	echo "A ferramenta para localizar o banco ira atualizar a base de dados, favor aguardar"
+	updatedb
+	echo -n "Atualizado"
+	sleep 5
+	clear
+	echo -n "aqui estão alguns dos possiveis endereços do banco:"
+	echo " "
+	echo " "
+	locate sysdb.fbd
+	echo " "
+	echo -n "digite o endereco do banco. Ex: /syspro/bd"
+	echo ""
+	read "ENDERECOBANCO"
+	echo ""
+	echo -n "digite a senha do banco de dados: "
+	echo ""
+	read -s "SENHABANCO"
+	echo ""
+	sleep 3
+	funcaoApagaArquivoVelho
+	repeteEcho;;
+
+Email)
+	clear
+	funcaoConfiguraEmail
+	repeteEcho;;
+
+Iniciar)
+	clear
+	###############################################
+	#Valida se o endereço do banco foi configurado#
+	###############################################
+	if [ -z "$ENDERECOBANCO" ]
+	then 
+		echo "voce nao configurou o programa, selecione a opcao 2"
+		sleep 4
+		repeteEcho
+	
+	##########################################
+	#valida se a senha do banco foi informada#
+	##########################################
+	elif [ -z "$SENHABANCO" ]
+	then
+		echo "voce nao configurou o programa, selecione a opcao 2"
+		sleep 4
+		repeteEcho
+	
+	###############################################################################
+	#valida se o e-mail foi configurado e solicita se o mesmo deve ser configurado#
+	###############################################################################
+	elif [ -z "$EMAIL" ]
+	then
+		echo -n "Deseja seguir sem o e-mail configurado? (S-Sim/N-Nao):"
+		read "RESPOSTA"
+		
+		####################################
+		#Caso siga sem o e-mail configurado#
+		####################################
+		if [[ "$RESPOSTA" == "S" ]]
+		then
+			
+			#####################################################################
+			#questiona se deverá ser realizado uma otimização ou uma verificação#
+			#####################################################################
+			
+			clear
+			echo "O que deseja fazer? (1 - Otimizacao / 2 - Verificacao de integridade do banco)"
+			read "RESPOSTA"
+			
+			###############################################################
+			#Caso selecione a opcao de verificacao de integridade do banco#
+			###############################################################
+			if [[ "$RESPOSTA" == "2" ]]
+			then
+				cd $ENDERECOBANCO
+				echo "o processo sera iniciado"
+				sleep 3
+				funcaoBackup $SENHABANCO sysdb.fbd sysdb.fbk BackupPrincipal.txt &
+				funcaoBackup $SENHABANCO sysdb_img.fbd sysdb_img.fbk BackupImagem.txt &
+				funcaoBackup $SENHABANCO sysdb_atua.fbd sysdb_atua.fbk BackupAtualiza.txt &
+				funcaoBackup $SENHABANCO logs.fbd logs.fbk BackupLogs.txt &
+				wait
+
+				rm -fr bd_old
+				mkdir bd_old
+				mv *.fbk bd_old/
+
+				cd bd_old/
+
+				funcaoRestore $SENHABANCO sysdb.fbk sysdb.fbd RestorePrincipal.txt &
+				funcaoRestore $SENHABANCO sysdb_img.fbk sysdb_img.fbd RestoreImagem.txt &
+				funcaoRestore $SENHABANCO logs.fbk logs.fbd RestoreLogs.txt &
+				funcaoRestore $SENHABANCO sysdb_atua.fbk sysdb_atua.fbd RestoreAtua.txt &
+				wait
+
+				cd $ENDERECOBANCO
+				rm -fr logs
+				mkdir logs
+				mv $ENDERECOBANCO/bd_old/*.txt $ENDERECOBANCO/logs/
+				mv $ENDERECOBANCO/*.txt $ENDERECOBANCO/logs/
+				echo -n "o processo de verificacao de integridade do banco foi finalizado"
+				
+				echo -n "agora os logs serao analisados"
+				echo " "
+				cd $ENDERECOBANCO/logs/
+				funcaolerarquivo SemEmail BackupPrincipal.txt
+				funcaolerarquivo SemEmail BackupImagem.txt
+				funcaolerarquivo SemEmail BackupAtualiza.txt
+				funcaolerarquivo SemEmail BackupLogs.txt
+				funcaolerarquivo SemEmail RestorePrincipal.txt
+				funcaolerarquivo SemEmail RestoreImagem.txt
+				funcaolerarquivo SemEmail RestoreLogs.txt
+				funcaolerarquivo SemEmail RestoreAtua.txt
+				echo -n > /etc/ssmtp/ssmtp.conf
+				sleep 4
+				repeteEcho
+				
+			###########################
+			#Caso opte pela otimização#
+			###########################
+			elif [[ "$RESPOSTA" == "1" ]]
+			then
+				echo "sera necessario parar os seguinte servicos que se conectam ao banco:"
+				echo "sysprot"
+				echo "firebird"
+				echo "glassfish/payara"
+				echo "hqbird"
+				echo -n
+				sleep 3
+				echo "os servicos serao parados"
+				sleep 3
+				service sysprot stop 
+				service firebird-superserver stop
+				service hqbird stop
+				
+				cd $ENDERECOBANCO
+				echo "o processo sera iniciado"
+				sleep 3
+				funcaoBackup $SENHABANCO sysdb.fbd sysdb.fbk BackupPrincipal.txt &
+				funcaoBackup $SENHABANCO sysdb_img.fbd sysdb_img.fbk BackupImagem.txt &
+				funcaoBackup $SENHABANCO sysdb_atua.fbd sysdb_atua.fbk BackupAtualiza.txt &
+				funcaoBackup $SENHABANCO logs.fbd logs.fbk BackupLogs.txt &
+				wait
+
+				rm -fr bd_old
+				mkdir bd_old
+				mv *.fbd bd_old/
+					
+				funcaoRestore $SENHABANCO sysdb.fbk sysdb.fbd RestorePrincipal.txt &
+				funcaoRestore $SENHABANCO sysdb_img.fbk sysdb_img.fbd RestoreImagem.txt &
+				funcaoRestore $SENHABANCO logs.fbk logs.fbd RestoreLogs.txt &
+				funcaoRestore $SENHABANCO sysdb_atua.fbk sysdb_atua.fbd RestoreAtua.txt &
+				wait
+				
+				mv *.fbk bd_old/
+
+				rm -fr logs
+				mkdir logs
+				mv *.txt logs/
+
+				echo "o processo de otimizacao foi finalizado"
+				
+				
+				echo -n "agora os logs serao analisados"
+				echo " "
+				cd $ENDERECOBANCO/logs/
+				funcaolerarquivo SemEmail BackupPrincipal.txt
+				funcaolerarquivo SemEmail BackupImagem.txt
+				funcaolerarquivo SemEmail BackupAtualiza.txt
+				funcaolerarquivo SemEmail BackupLogs.txt
+				funcaolerarquivo SemEmail RestorePrincipal.txt
+				funcaolerarquivo SemEmail RestoreImagem.txt
+				funcaolerarquivo SemEmail RestoreLogs.txt
+				funcaolerarquivo SemEmail RestoreAtua.txt
+				sleep 4
+				echo -n > /etc/ssmtp/ssmtp.conf
+				repeteEcho
+			else
+				echo "Opcao Invalida"
+				sleep 3
+				repeteEcho
+			fi
+			
+		###############################################
+		#Caso digite "N" se deseja seguir sem o e-mail#
+		###############################################
+		elif [[ "$RESPOSTA" == "N" ]]
+		then
+			echo -n "Otimo, entao selecione a opcao 3"
+			sleep 3
+			repeteEcho
+			
+		else 
+		echo "Opcao Invalida"
+		sleep 2
+		repeteEcho
+		fi
+		
+	#####################################
+	#caso o e-mail ja esteja configurado#
+	#####################################
+	else
+
+		#####################################################################
+		#questiona se deverá ser realizado uma otimização ou uma verificação#
+		#####################################################################
+		clear
+		echo "O que deseja fazer? (1 - Otimizacao / 2 - Verificacao de integridade do banco)"
+		read "RESPOSTA"
+		
+		###############################################################
+		#Caso selecione a opcao de verificacao de integridade do banco#
+		###############################################################
+		if [[ "$RESPOSTA" == "2" ]]
+		then
+			cd $ENDERECOBANCO
+			echo "o processo sera iniciado"
+			sleep 3
+			funcaoBackup $SENHABANCO sysdb.fbd sysdb.fbk BackupPrincipal.txt &
+			funcaoBackup $SENHABANCO sysdb_img.fbd sysdb_img.fbk BackupImagem.txt &
+			funcaoBackup $SENHABANCO sysdb_atua.fbd sysdb_atua.fbk BackupAtualiza.txt &
+			funcaoBackup $SENHABANCO logs.fbd logs.fbk BackupLogs.txt &
+			wait
+
+			rm -fr bd_old
+			mkdir bd_old
+			mv *.fbk bd_old/
+				
+			cd bd_old/
+				
+			funcaoRestore $SENHABANCO sysdb.fbk sysdb.fbd RestorePrincipal.txt &
+			funcaoRestore $SENHABANCO sysdb_img.fbk sysdb_img.fbd RestoreImagem.txt &
+			funcaoRestore $SENHABANCO logs.fbk logs.fbd RestoreLogs.txt &
+			funcaoRestore $SENHABANCO sysdb_atua.fbk sysdb_atua.fbd RestoreAtua.txt &
+			wait
+
+			cd $ENDERECOBANCO
+			rm -fr logs
+			mkdir logs
+			mv $ENDERECOBANCO/bd_old/*.txt $ENDERECOBANCO/logs/
+			mv $ENDERECOBANCO/*.txt $ENDERECOBANCO/logs/
+
+			echo -n "o processo de verificacao de integridade do banco foi finalizado"
+			sleep 4
+
+			cd $ENDERECOBANCO/logs
+			echo -n "agora os logs serao analisados"
+			echo " "
+			funcaolerarquivo ComEmail BackupPrincipal.txt
+			funcaolerarquivo ComEmail BackupImagem.txt
+			funcaolerarquivo ComEmail BackupAtualiza.txt
+			funcaolerarquivo ComEmail BackupLogs.txt
+			funcaolerarquivo ComEmail RestorePrincipal.txt
+			funcaolerarquivo ComEmail RestoreImagem.txt
+			funcaolerarquivo ComEmail RestoreLogs.txt
+			funcaolerarquivo ComEmail RestoreAtua.txt   
+			repeteEcho
+			echo -n > /etc/ssmtp/ssmtp.conf
+		
+		###########################
+		#Caso opte pela otimização#
+		###########################
+		elif [[ "$RESPOSTA" == "1" ]]
+		then
+			echo "sera necessario parar os seguinte servicos que se conectam ao banco:"
+			echo "sysprot"
+			echo "firebird"
+			echo "glassfish/payara"
+			echo "hqbird"
+			echo -n
+			sleep 3
+			echo "os servicos serao parados"
+			sleep 3
+			service sysprot stop 
+			service firebird-superserver stop
+			service hqbird stop
+			
+			cd $ENDERECOBANCO
+			echo "o processo sera iniciado"
+			sleep 3
+			funcaoBackup $SENHABANCO sysdb.fbd sysdb.fbk BackupPrincipal.txt &
+			funcaoBackup $SENHABANCO sysdb_img.fbd sysdb_img.fbk BackupImagem.txt &
+			funcaoBackup $SENHABANCO sysdb_atua.fbd sysdb_atua.fbk BackupAtualiza.txt &
+			funcaoBackup $SENHABANCO logs.fbd logs.fbk BackupLogs.txt &
+			wait
+
+			rm -fr bd_old
+			mkdir bd_old
+			mv *.fbd bd_old/
+				
+			funcaoRestore $SENHABANCO sysdb.fbk sysdb.fbd RestorePrincipal.txt &
+			funcaoRestore $SENHABANCO sysdb_img.fbk sysdb_img.fbd RestoreImagem.txt &
+			funcaoRestore $SENHABANCO logs.fbk logs.fbd RestoreLogs.txt &
+			funcaoRestore $SENHABANCO sysdb_atua.fbk sysdb_atua.fbd RestoreAtua.txt &
+			wait
+			
+			mv *.fbk bd_old/
+
+			rm -fr logs
+			mkdir logs
+			mv *.txt logs/
+
+			echo "o processo otimizacao finalizado"
+			echo " "
+			echo -n "agora os logs serao analisados"
+			echo " "
+			cd $ENDERECOBANCO/logs/
+			funcaolerarquivo ComEmail BackupPrincipal.txt
+			funcaolerarquivo ComEmail BackupImagem.txt
+			funcaolerarquivo ComEmail BackupAtualiza.txt
+			funcaolerarquivo ComEmail BackupLogs.txt
+			funcaolerarquivo ComEmail RestorePrincipal.txt
+			funcaolerarquivo ComEmail RestoreImagem.txt
+			funcaolerarquivo ComEmail RestoreLogs.txt
+			funcaolerarquivo ComEmail RestoreAtua.txt
+			sleep 4
+			echo -n > /etc/ssmtp/ssmtp.conf
+			repeteEcho
+		else
+			echo "Opcao Invalida"
+			sleep 3
+			repeteEcho
+		fi
+	fi;;
+
+
+Sair)
+	clear
+	echo "voce selecionou a opcao de sair, ate logo"
+	sleep 3
+	exit;;
+*) 
+	echo "esta opcao nao existe, favor selecionar entre as opcoes 1 a 5"
+	sleep 4
+	repeteEcho;;
+esac
+done
